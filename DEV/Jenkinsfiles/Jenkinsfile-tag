@@ -1,0 +1,159 @@
+pipeline {
+    agent { 
+        label 'node1 || node2 || node3'
+         }
+   
+  
+    options { buildDiscarder(logRotator(artifactDaysToKeepStr: '',
+     artifactNumToKeepStr: '', daysToKeepStr: '3', numToKeepStr: '5'))
+      disableConcurrentBuilds() }
+      
+       environment {
+		DOCKERHUB_CREDENTIALS=credentials('dockerhub')
+	}
+
+
+    stages {
+
+       stage('Setup parameters') {
+            steps {
+                script { 
+                    properties([
+                        parameters([
+                           string(
+                                defaultValue: 'main', 
+                                name: 'BranchName', 
+                                description: 'Enter the branch to tag',
+                                trim: true
+                            ), 
+
+                            string(
+                                defaultValue: '', 
+                                name: 'TAG', 
+                                description: 'Enter the tag value starting with v',
+                                trim: true
+                            )
+                            
+                        ])
+                    ])
+                }
+            }
+        }
+
+
+ stage(' cloning') {
+   
+
+            steps {
+               sh '''
+               rm -rf ./*
+	       git clone -b $BranchName git@github.com:devopseasylearning/S2-pipeline01.git
+           ls -l
+         cd S2-pipeline01/DEV
+         ls -l
+               '''
+            }
+        }
+
+
+
+
+
+
+
+stage('checking ') {
+
+            steps {
+               sh '''
+            cd S2-pipeline01/DEV
+              echo ${TAG} > file.txt
+              ls -l 
+              bash -x check.sh
+              rm -rf file.txt 
+               '''
+            }
+        }
+       
+
+
+    stage('tagging & push') {
+            steps {
+               sh '''
+echo  '[url "git@github.com:"]' >> ~/.gitconfig 
+ echo 'insteadOf = https://github.com/' >> ~/.gitconfig 
+ git config --global user.email "info@devopseasylearning.com"
+  git config --global user.name "devopseasylearning"
+git tag -a $TAG -m "Tag generated from jenkins"
+git tag
+git push origin $TAG
+                '''
+            }
+        }
+
+      stage('Docker Login') {
+
+			steps {
+				sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+			}
+		}
+
+           
+        
+    stage('build ') {
+
+            steps {
+               sh '''
+               cd S2-pipeline01/DEV
+           docker build -t devopseasylearning2021/canary-prod:$TAG .
+               '''
+            }
+        }
+
+
+
+       stage('Docker push ') {
+
+            steps {
+               sh '''
+
+             docker push  devopseasylearning2021/canary-prod:$TAG 
+                '''
+            }
+        }
+
+    }
+            
+
+   post {
+   
+   success {
+      slackSend (channel: '#development-alerts', color: 'good', message: "SUCCESSFUL:\n Application CANARY\n  New tag: $TAG\n  ")
+    }
+
+ 
+    unstable {
+      slackSend (channel: '#development-alerts', color: 'warning', message: "UNSTABLE: Application CANARY\n Reason: Fail to push new tag, please investigate")
+    }
+
+    failure {
+      slackSend (channel: '#development-alerts', color: '#FF0000', message: "FAILURE: Application CANARY\n Reason: Fail to push new tag, please investigate")
+    }
+   
+    cleanup {
+      deleteDir()
+    }
+}
+
+
+
+
+    
+
+
+
+    }
+
+
+
+
+

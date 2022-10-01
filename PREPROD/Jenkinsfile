@@ -1,0 +1,159 @@
+pipeline {
+    agent { 
+        label 'node1 || node2 || node3 || node4 || node5'
+         }
+   
+  
+    options { buildDiscarder(logRotator(artifactDaysToKeepStr: '',
+     artifactNumToKeepStr: '', daysToKeepStr: '3', numToKeepStr: '5'))
+      disableConcurrentBuilds() }
+      
+    environment {
+		DOCKERHUB_CREDENTIALS=credentials('dockerhub')
+	}
+
+
+    stages {
+
+
+           stage('Setup parameters') {
+            steps {
+                script { 
+                    properties([
+                        parameters([
+                            string(name: 'WARNTIME',
+                             defaultValue: '0',
+                            description: '''Warning time (in minutes) before starting upgrade'''),
+
+                             
+                         string(
+                                defaultValue: 'v1.0.0',
+                                name: 'TAG',
+                                trim: true
+                            ),
+
+                          string(
+                                defaultValue: 'develop',
+                                name: 'Please_leave_this_section_as_it_is',
+                                trim: true
+                            ),
+                        ])
+                    ])
+                }
+            }
+        }
+
+
+        //////////////////////////////////
+       stage('warning') {
+      steps {
+        script {
+            notifyUpgrade(currentBuild.currentResult, "WARNING")
+            sleep(time:env.WARNTIME, unit:"MINUTES")
+        }
+      }
+    }
+
+  
+
+
+
+      stage('Docker Login') {
+               agent {
+  label "jenkins-node"
+    }
+			steps {
+				sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+			}
+		}
+
+           
+            
+stage('update charts ') {
+                agent {
+  label 'node1 || node2 || node3 || node4 || node5'
+    }
+            steps {
+               sh '''
+            cd $WORKSPACE/DEV
+            #! /bin/bash 
+
+rm -rf S2-pipeline-charts || true 
+git clone git@github.com:devopseasylearning/S2-pipeline-charts.git
+cd S2-pipeline-charts/canary-preprod
+
+rm -rf  values-preprod.yaml || true 
+cat <<EOF > values-preprod.yaml
+image:
+  repository: devopseasylearning2021/canary-prod
+  tag: "$TAG"
+service:
+  type: LoadBalancer
+EOF
+
+cat  values-preprod.yaml
+
+echo  '[url "git@github.com:"]' >> ~/.gitconfig 
+ echo 'insteadOf = https://github.com/' >> ~/.gitconfig 
+ git config --global user.email "info@devopseasylearning.com"
+  git config --global user.name "devopseasylearning"
+  git add -A
+git commit -m "Tag generated from jenkins"
+git push 
+                '''
+            }
+        }
+
+    }  
+
+
+        
+
+     post {
+    always {
+      script {
+        notifyUpgrade(currentBuild.currentResult, "POST")
+      }
+    }
+    cleanup {
+      deleteDir()
+    }
+  }
+}   
+
+
+
+
+
+def notifyUpgrade(String buildResult, String whereAt) {
+  if (Please_leave_this_section_as_it_is == 'origin/develop') {
+    channel = 'development-alerts'
+  } else {
+    channel = 'development-alerts'
+  }
+  if (buildResult == "SUCCESS") {
+    switch(whereAt) {
+      case 'WARNING':
+        slackSend(channel: channel,
+                color: "#439FE0",
+                message: "DEVELOPMENT-Canary: Upgrade starting in ${env.WARNTIME} minutes @ ${env.BUILD_URL}")
+        break
+    case 'STARTING':
+      slackSend(channel: channel,
+                color: "good",
+                message: "DEVELOPMENT-Canary: Starting upgrade @ ${env.BUILD_URL}")
+      break
+    default:
+        slackSend(channel: channel,
+                color: "good",
+                message: "DEVELOPMENT-Canary: Upgrade completed successfully @ ${env.BUILD_URL}")
+        break
+    }
+  } else {
+    slackSend(channel: channel,
+              color: "danger",
+              message: "DEVELOPMENT-Canary: Upgrade was not successful. Please investigate it immediately.  @ ${env.BUILD_URL}")
+    }
+}
+
+
